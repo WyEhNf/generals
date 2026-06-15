@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "experts": [
+    {
+      "id": "ppo600",
+      "path": "../../checkpoints/ppo_upd600/model.pt"
+    },
+    {
+      "id": "terminal500",
+      "path": "../../checkpoints/terminal500/model.pt"
+    },
+    {
+      "id": "city_cons200",
+      "path": "../../checkpoints/city_cons200/model.pt"
+    },
+    {
+      "id": "city_decay085_700",
+      "path": "../../checkpoints/city_decay085_700/model.pt"
+    }
+  ]
+}

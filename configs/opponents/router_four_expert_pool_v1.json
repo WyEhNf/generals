@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "self_play_weight": 1.0,
+  "opponent_device": "same_as_training",
+  "opponent_pass_bias": 0.0,
+  "opponents": [
+    {
+      "id": "ppo600",
+      "path": "../../checkpoints/ppo_upd600/model.pt",
+      "weight": 0.25
+    },
+    {
+      "id": "terminal500",
+      "path": "../../checkpoints/terminal500/model.pt",
+      "weight": 0.25
+    },
+    {
+      "id": "city_cons200",
+      "path": "../../checkpoints/city_cons200/model.pt",
+      "weight": 0.25
+    },
+    {
+      "id": "city_decay085_700",
+      "path": "../../checkpoints/city_decay085_700/model.pt",
+      "weight": 0.25
+    }
+  ]
+}

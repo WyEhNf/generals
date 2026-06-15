@@ -1,0 +1,94 @@
+{
+  "version": 1,
+  "terminal": {
+    "win": 1.0,
+    "loss": -1.0,
+    "draw": 0.0
+  },
+  "terminal_bonuses": {
+    "city_capture_win": 0.125
+  },
+  "city_capture_lifecycle": {
+    "max_reward_turns_per_capture": 100,
+    "survive_drip_per_turn": 0.00055,
+    "hold_drip_per_turn": 0.001,
+    "survive_milestone": 0.006,
+    "hold_milestone": 0.014,
+    "death_penalty": -0.0275,
+    "enemy_distance": {
+      "enabled": true,
+      "min_distance": 3,
+      "full_distance": 10,
+      "min_multiplier": 0.25
+    }
+  },
+  "city_attack_outcome": {
+    "window_turns": 10,
+    "success_reward": 0.02,
+    "failure_penalty": -0.02
+  },
+  "metrics": {
+    "land": {
+      "mode": "milestone_absolute",
+      "interval": 50
+    },
+    "city": {
+      "mode": "potential_delta"
+    },
+    "city_capture": {
+      "mode": "event_city_capture"
+    },
+    "army": {
+      "mode": "potential_delta"
+    },
+    "attack": {
+      "mode": "event_damage"
+    }
+  },
+  "segments": [
+    {
+      "start_turn": 0,
+      "end_turn": 50,
+      "weights": {
+        "land": 0.4,
+        "city": 0.04,
+        "city_capture": 0.002,
+        "army": 0.03,
+        "attack": 0.0005
+      }
+    },
+    {
+      "start_turn": 50,
+      "end_turn": 100,
+      "weights": {
+        "land": 0.36,
+        "city": 0.045,
+        "city_capture": 0.004,
+        "army": 0.0275,
+        "attack": 0.0005
+      }
+    },
+    {
+      "start_turn": 100,
+      "end_turn": 300,
+      "weights": {
+        "land": 0.1,
+        "city": 0.045,
+        "city_capture": 0.006,
+        "army": 0.013,
+        "attack": 0.00125
+      }
+    },
+    {
+      "start_turn": 300,
+      "end_turn": null,
+      "weights": {
+        "land": 0.055,
+        "city": 0.08,
+        "city_capture": 0.016,
+        "army": 0.007,
+        "attack": 0.00175
+      }
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+cff-version: 1.2.0
+message: "If you use this project, please cite it as a course project repository."
+title: "Staged Reward Shaping for Delayed Strategic Objectives in Generals.io"
+authors:
+  - family-names: "Zhu"
+    given-names: "Zemu"
+date-released: "2026-06-15"
+license: "Apache-2.0"
+abstract: >
+  A Generals.io bot training and evaluation project with a local simulator,
+  replay-based behavior cloning, PPO self-play, staged reward shaping for
+  delayed city-capture objectives, trained checkpoints, visualization, and an
+  online bot.generals.io adapter.

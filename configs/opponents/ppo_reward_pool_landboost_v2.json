@@ -1,0 +1,63 @@
+{
+  "version": 1,
+  "self_play_weight": 2.0,
+  "opponent_device": "same_as_training",
+  "opponent_pass_bias": 0.0,
+  "opponents": [
+    {
+      "id": "bc_3epoch",
+      "path": "../../checkpoints/bc_3epoch/model.pt",
+      "weight": 0.05
+    },
+    {
+      "id": "ppo_1h",
+      "path": "../../checkpoints/ppo_1h/model.pt",
+      "weight": 0.05
+    },
+    {
+      "id": "ppo_upd70",
+      "path": "../../checkpoints/ppo_upd70/model.pt",
+      "weight": 0.05
+    },
+    {
+      "id": "ppo_upd180",
+      "path": "../../checkpoints/ppo_upd180/model.pt",
+      "weight": 0.05
+    },
+    {
+      "id": "ppo_upd270",
+      "path": "../../checkpoints/ppo_upd270/model.pt",
+      "weight": 0.1
+    },
+    {
+      "id": "ppo_upd400",
+      "path": "../../checkpoints/ppo_upd400/model.pt",
+      "weight": 0.25
+    },
+    {
+      "id": "ppo_upd500",
+      "path": "../../checkpoints/ppo_upd500/model.pt",
+      "weight": 0.45
+    },
+    {
+      "id": "ppo_reward_v1_20",
+      "path": "../../checkpoints/ppo_reward_v1_20/model.pt",
+      "weight": 0.1
+    },
+    {
+      "id": "ppo_reward_v1_100",
+      "path": "../../checkpoints/ppo_reward_v1_100/model.pt",
+      "weight": 0.15
+    },
+    {
+      "id": "ppo_reward_v1_160",
+      "path": "../../checkpoints/ppo_reward_v1_160/model.pt",
+      "weight": 0.3
+    },
+    {
+      "id": "ppo_reward_v1_landboost300",
+      "path": "../../checkpoints/ppo_reward_v1_landboost300/model.pt",
+      "weight": 0.45
+    }
+  ]
+}

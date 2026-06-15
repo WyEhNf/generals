@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "terminal": {
+    "win": 1.0,
+    "loss": -1.0,
+    "draw": 0.0
+  },
+  "metrics": {
+    "land": {
+      "mode": "milestone_absolute",
+      "interval": 50
+    },
+    "city": {
+      "mode": "potential_delta"
+    },
+    "army": {
+      "mode": "potential_delta"
+    },
+    "attack": {
+      "mode": "event_damage"
+    }
+  },
+  "segments": [
+    {
+      "start_turn": 0,
+      "end_turn": 50,
+      "weights": {
+        "land": 0.55,
+        "city": 0.02,
+        "army": 0.03,
+        "attack": 0.002
+      }
+    },
+    {
+      "start_turn": 50,
+      "end_turn": 100,
+      "weights": {
+        "land": 0.4,
+        "city": 0.018,
+        "army": 0.028,
+        "attack": 0.002
+      }
+    },
+    {
+      "start_turn": 100,
+      "end_turn": 300,
+      "weights": {
+        "land": 0.04,
+        "city": 0.02,
+        "army": 0.012,
+        "attack": 0.006
+      }
+    },
+    {
+      "start_turn": 300,
+      "end_turn": null,
+      "weights": {
+        "land": 0.008,
+        "city": 0.012,
+        "army": 0.006,
+        "attack": 0.012
+      }
+    }
+  ]
+}

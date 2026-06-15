@@ -1,0 +1,24 @@
+name: smoke
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  simulator-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run simulator and visualization smoke tests
+        run: |
+          PYTHONPATH=src python -m unittest \
+            tests.test_sim_rules \
+            tests.test_sim_observation \
+            tests.test_mapgen \
+            tests.test_expander_match \
+            tests.test_flobot \
+            tests.test_matches \
+            tests.test_agents_and_viz

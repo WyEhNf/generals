@@ -1,0 +1,2 @@
+{"version":13,"id":"fixture-a","mapWidth":3,"mapHeight":3,"usernames":["p0","p1"],"stars":[75,61],"cities":[2],"cityArmies":[40],"generals":[0,8],"mountains":[4],"moves":[[0,0,1,0,1],[1,8,5,1,2]],"afks":[]}
+{"version":13,"id":"fixture-b","mapWidth":3,"mapHeight":3,"usernames":["a","b"],"stars":[10,11],"cities":[],"cityArmies":[],"generals":[0,8],"mountains":[],"moves":[[0,0,3,0,1]],"afks":[]}

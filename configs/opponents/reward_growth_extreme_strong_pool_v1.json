@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "self_play_weight": 2.0,
+  "opponent_device": "same_as_training",
+  "opponent_pass_bias": 0.0,
+  "opponents": [
+    {
+      "id": "ppo_upd600",
+      "path": "../../checkpoints/ppo_upd600/model.pt",
+      "weight": 0.75
+    },
+    {
+      "id": "ppo_upd500",
+      "path": "../../checkpoints/ppo_upd500/model.pt",
+      "weight": 0.4
+    },
+    {
+      "id": "terminal500",
+      "path": "../../checkpoints/terminal500/model.pt",
+      "weight": 0.3
+    },
+    {
+      "id": "land400",
+      "path": "../../checkpoints/land400/model.pt",
+      "weight": 0.25
+    },
+    {
+      "id": "extreme200_anchor",
+      "path": "../../checkpoints/reward_growth_extreme200/model.pt",
+      "weight": 0.3
+    }
+  ]
+}
