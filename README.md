@@ -64,6 +64,9 @@ python3 -m venv .venv
 ```
 
 All commands below should be run from this directory.
+Use `.venv/bin/python`, not the system `python`, when running the examples.
+If online play fails with `ModuleNotFoundError: numpy`, `socketio`, or `torch`,
+the dependencies were not installed in the interpreter used to launch the bot.
 
 ## Included Checkpoints
 
@@ -92,7 +95,7 @@ also workable because each checkpoint is below GitHub's hard file-size limit.
 ## Render One Local Replay
 
 ```bash
-PYTHONPATH=src python scripts/render_match.py \
+PYTHONPATH=src .venv/bin/python scripts/render_match.py \
   --agent0 checkpoint:checkpoints/step1_step2_step3/model.pt \
   --agent1 checkpoint:checkpoints/terminal_ppo/model.pt \
   --turns 800 \
@@ -110,7 +113,7 @@ Open `artifacts/demo_final_vs_terminal.html` in a browser.
 ## Run a Small Head-to-Head Evaluation
 
 ```bash
-PYTHONPATH=src python scripts/evaluate_match.py \
+PYTHONPATH=src .venv/bin/python scripts/evaluate_match.py \
   --agent final=checkpoint:checkpoints/step1_step2_step3/model.pt \
   --agent terminal=checkpoint:checkpoints/terminal_ppo/model.pt \
   --pair final:terminal \
@@ -131,7 +134,7 @@ The aggregate result is written to
 ## Measure City-Capture Behavior
 
 ```bash
-PYTHONPATH=src python scripts/evaluate_city_behavior.py \
+PYTHONPATH=src .venv/bin/python scripts/evaluate_city_behavior.py \
   --agent final=checkpoint:checkpoints/step1_step2_step3/model.pt \
   --mode selfplay \
   --target-turn 1200 \
@@ -143,7 +146,7 @@ PYTHONPATH=src python scripts/evaluate_city_behavior.py \
   --device cpu \
   --output-dir artifacts/city_behavior_final
 
-PYTHONPATH=src python scripts/summarize_city_capture_outcome.py \
+PYTHONPATH=src .venv/bin/python scripts/summarize_city_capture_outcome.py \
   --input artifacts/city_behavior_final/records.jsonl \
   --output artifacts/city_behavior_final/city_capture_outcome.json
 ```
@@ -170,7 +173,7 @@ GENERALS_DEVICE=cpu
 Then run:
 
 ```bash
-PYTHONPATH=src python scripts/run_remote_agent.py
+PYTHONPATH=src .venv/bin/python scripts/run_remote_agent.py
 ```
 
 `GENERALS_USER_ID` is the private bot id bound on `bot.generals.io`. It is not
@@ -179,7 +182,7 @@ the display name. Never commit `.env`.
 You can also pass settings directly:
 
 ```bash
-PYTHONPATH=src python scripts/run_remote_agent.py \
+PYTHONPATH=src .venv/bin/python scripts/run_remote_agent.py \
   --agent checkpoint:checkpoints/step1_step2_step3/model.pt \
   --user-id YOUR_PRIVATE_USER_ID \
   --username "[Bot] your_bot_name" \
@@ -194,7 +197,7 @@ Install `requirements.txt` before running the full suite; training and remote
 adapter tests import `torch` and `python-socketio`.
 
 ```bash
-PYTHONPATH=src python -m unittest discover -s tests
+PYTHONPATH=src .venv/bin/python -m unittest discover -s tests
 ```
 
 The release test suite covers the simulator, local match runner, visualization

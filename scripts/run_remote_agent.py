@@ -9,11 +9,38 @@ import shlex
 import sys
 import time
 from datetime import datetime, timezone
+from importlib.util import find_spec
 from pathlib import Path
 from typing import Any, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
+
+_REQUIRED_RUNTIME_MODULES = {
+    "numpy": "numpy",
+    "socketio": "python-socketio[client]",
+}
+
+
+def _check_runtime_dependencies() -> None:
+    """Fail early with an actionable message when online runtime deps are missing."""
+    missing = [
+        package
+        for module_name, package in _REQUIRED_RUNTIME_MODULES.items()
+        if find_spec(module_name) is None
+    ]
+    if missing:
+        joined = ", ".join(missing)
+        print(
+            "Missing online runtime dependencies: "
+            f"{joined}. Install them with: "
+            f"{sys.executable} -m pip install -r {ROOT / 'requirements.txt'}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
+
+_check_runtime_dependencies()
 
 from generals_bot.matches import make_policy, parse_agent_spec
 from generals_bot.remote import GeneralsSocketClient, RemoteGameState, attacks_from_action_like

@@ -13,7 +13,7 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install smoke-test dependencies
-        run: python -m pip install "numpy>=1.24"
+        run: python -m pip install -r requirements-smoke.txt
       - name: Run simulator and visualization smoke tests
         run: |
           PYTHONPATH=src python -m unittest \
@@ -23,4 +23,5 @@ jobs:
             tests.test_expander_match \
             tests.test_flobot \
             tests.test_matches \
-            tests.test_agents_and_viz
+            tests.test_agents_and_viz \
+            tests.test_remote
