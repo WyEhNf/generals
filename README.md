@@ -1,5 +1,8 @@
 # Generals.io Adaptive Chunk Temporal Agent
 
+> **Note:** This README has been modified from the
+> [original](https://github.com/pigstd/generals.io-bot/blob/main/README.md).
+
 This project is built upon [pigstd/generals.io-bot](https://github.com/pigstd/generals.io-bot),
 adopting its local simulator, behavior cloning pre-training, PPO self-play, staged reward
 shaping, and other foundational architecture and training configurations.

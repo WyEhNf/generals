@@ -1,6 +1,9 @@
 Staged Reward Generals.io Bot
 Copyright 2026 Zemu Zhu
 
+Generals.io Adaptive Chunk Temporal Agent
+Copyright 2026 WyEhNf
+
 This product includes a Python port of the Flobot benchmark bot and uses public
 Generals.io replay data in behavior-cloning experiments. See
 THIRD_PARTY_NOTICES.md for details.
