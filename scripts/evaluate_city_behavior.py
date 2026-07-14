@@ -404,6 +404,10 @@ def _record_city_events(
             stats["neutral_city_capture_count"] += 1
             if stats["first_neutral_city_capture_turn"] is None:
                 stats["first_neutral_city_capture_turn"] = int(executed.turn)
+            stats["capture_records"].append({
+                "city_tile": executed.action.end,
+                "capture_turn": int(executed.turn),
+            })
         else:
             stats["failed_neutral_city_attack_count"] += 1
 
@@ -417,11 +421,21 @@ def _score_records(game: dict[str, Any], *, target_turn: int) -> list[dict[str, 
     side_labels = game.get("side_labels")
     side_specs = game.get("side_specs")
     city_counts = _owned_city_counts(env)
+    owned_city_tiles = _owned_city_tiles(env)
     records = []
+    hold_checkpoints = (50, 100)
     for score in env.scores:
         stats = game["city_stats"][score.player_id]
         attack_count = int(stats["neutral_city_attack_count"])
         capture_count = int(stats["neutral_city_capture_count"])
+        hold_rates = {}
+        for threshold in hold_checkpoints:
+            hold_rates[f"city_hold_rate_at_{threshold}"] = _compute_hold_rate(
+                stats["capture_records"],
+                owned_city_tiles.get(score.player_id, set()),
+                measured_turn=measured_turn,
+                hold_threshold=threshold,
+            )
         records.append({
             "agent_label": (
                 side_labels[score.player_id]
@@ -458,6 +472,8 @@ def _score_records(game: dict[str, Any], *, target_turn: int) -> list[dict[str, 
                 if attack_count
                 else None
             ),
+            "city_hold_rate_at_50": hold_rates["city_hold_rate_at_50"],
+            "city_hold_rate_at_100": hold_rates["city_hold_rate_at_100"],
             "mean_target_city_army_before": (
                 stats["target_city_army_before_sum"]
                 / stats["target_city_army_before_count"]
@@ -497,6 +513,16 @@ def _summarize_agent_records(records: list[dict[str, Any]]) -> dict[str, Any]:
     ]
     total_attacks = sum(attacks)
     total_captures = sum(captures)
+    hold_50_rates = [
+        record["city_hold_rate_at_50"]
+        for record in records
+        if record["city_hold_rate_at_50"] is not None
+    ]
+    hold_100_rates = [
+        record["city_hold_rate_at_100"]
+        for record in records
+        if record["city_hold_rate_at_100"] is not None
+    ]
     return {
         "agent_spec": records[0]["agent_spec"],
         "samples": len(records),
@@ -512,6 +538,14 @@ def _summarize_agent_records(records: list[dict[str, Any]]) -> dict[str, Any]:
             if total_attacks
             else None
         ),
+        "mean_city_hold_rate_at_50": (
+            statistics.fmean(hold_50_rates) if hold_50_rates else None
+        ),
+        "mean_city_hold_rate_at_100": (
+            statistics.fmean(hold_100_rates) if hold_100_rates else None
+        ),
+        "hold_50_samples": len(hold_50_rates),
+        "hold_100_samples": len(hold_100_rates),
         "mean_owned_cities": statistics.fmean(owned_cities),
         "median_owned_cities": statistics.median(owned_cities),
         "max_owned_cities": max(owned_cities),
@@ -539,6 +573,7 @@ def _empty_game_city_stats() -> dict[int, dict[str, Any]]:
             "first_neutral_city_capture_turn": None,
             "target_city_army_before_sum": 0,
             "target_city_army_before_count": 0,
+            "capture_records": [],
         }
         for player in (0, 1)
     }
@@ -552,6 +587,50 @@ def _owned_city_counts(env: GeneralsEnv) -> dict[int, int]:
         player: int((env.state.cities & (env.state.terrain == player)).sum())
         for player in (0, 1)
     }
+
+
+def _owned_city_tiles(env: GeneralsEnv) -> dict[int, set[int]]:
+    """Return the set of city tile indices owned by each player."""
+    if env.state is None:
+        raise RuntimeError("environment has not been reset")
+    return {
+        player: set(
+            int(tile)
+            for tile in np.flatnonzero(
+                env.state.cities & (env.state.terrain == player)
+            )
+        )
+        for player in (0, 1)
+    }
+
+
+def _compute_hold_rate(
+    capture_records: list[dict[str, int]],
+    owned_tiles: set[int],
+    *,
+    measured_turn: int,
+    hold_threshold: int,
+) -> float | None:
+    """Return the fraction of captured cities still held after a turn threshold.
+
+    A city is counted as held if the game lasted at least ``hold_threshold``
+    turns after its capture and the city tile is still owned at the final
+    measured turn.  Captures that occur too late to observe the threshold
+    are excluded from the denominator.
+    """
+    eligible = 0
+    held = 0
+    for record in capture_records:
+        capture_turn = int(record["capture_turn"])
+        city_tile = int(record["city_tile"])
+        if measured_turn < capture_turn + hold_threshold:
+            continue
+        eligible += 1
+        if city_tile in owned_tiles:
+            held += 1
+    if eligible == 0:
+        return None
+    return held / eligible
 
 
 def _build_config(args: argparse.Namespace, *, seed: int):

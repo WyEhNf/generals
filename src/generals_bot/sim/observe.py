@@ -75,15 +75,19 @@ def observe(state: GameState, player: int) -> Observation:
 
 
 def visible_mask(state: GameState, player: int) -> np.ndarray:
+    """Return a boolean mask of tiles visible to *player* (3×3 box around owned)."""
     owned = state.terrain == player
-    result = np.zeros((state.height, state.width), dtype=bool)
-    rows, cols = np.nonzero(owned)
-    for row, col in zip(rows, cols, strict=True):
-        r0 = max(0, row - 1)
-        r1 = min(state.height, row + 2)
-        c0 = max(0, col - 1)
-        c1 = min(state.width, col + 2)
-        result[r0:r1, c0:c1] = True
+    result = owned.copy()
+    # 4 cardinals
+    result[1:, :] |= owned[:-1, :]
+    result[:-1, :] |= owned[1:, :]
+    result[:, 1:] |= owned[:, :-1]
+    result[:, :-1] |= owned[:, 1:]
+    # 4 diagonals
+    result[1:, 1:] |= owned[:-1, :-1]
+    result[1:, :-1] |= owned[:-1, 1:]
+    result[:-1, 1:] |= owned[1:, :-1]
+    result[:-1, :-1] |= owned[1:, 1:]
     return result
 
 

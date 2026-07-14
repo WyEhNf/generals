@@ -910,6 +910,7 @@ class PPOTrainingTest(unittest.TestCase):
                 window_turns=10,
                 success_reward=0.02,
                 failure_penalty=-0.02,
+                attribution="retroactive",
             ),
         )
         calculator = RewardCalculator(config)
@@ -1119,6 +1120,317 @@ class PPOTrainingTest(unittest.TestCase):
 
             self.assertIn("enemy_king_loss", metrics_rows[0])
             self.assertIn("enemy_king_distance_loss", metrics_rows[0])
+
+    def test_resolution_mode_attack_outcome_rewards_added_to_current_step(self) -> None:
+        """In resolution mode, attack outcomes should add to the current step."""
+        from generals_bot.training.rewards import (
+            CityAttackOutcomeConfig,
+            RewardCalculator,
+            RewardConfig,
+            RewardState,
+            default_reward_config,
+        )
+
+        default = default_reward_config()
+        config = RewardConfig(
+            terminal=default.terminal,
+            metrics=default.metrics,
+            segments=(),
+            city_attack_outcome=CityAttackOutcomeConfig(
+                window_turns=10,
+                success_reward=0.02,
+                failure_penalty=-0.02,
+                attribution="resolution",
+            ),
+        )
+        calculator = RewardCalculator(config)
+        self.assertEqual(
+            calculator.config.city_attack_outcome.attribution,
+            "resolution",
+        )
+
+        before = RewardState(
+            turn=10, army=(10, 10), land=(2, 2), cities=(0, 0), city_tiles=(4,),
+        )
+        failed_city_attack = ExecutedAction(
+            player_id=0,
+            action=Action(0, 0, 4),
+            turn=10,
+            valid=True,
+            target_owner_before=-1,
+            target_army_before=20,
+            moved_army=20,
+        )
+
+        events = calculator.city_attack_outcome_events(
+            [failed_city_attack],
+            before.city_tiles,
+            attack_turn=before.turn,
+            reward_indices_by_player={0: 42},
+        )
+        self.assertEqual(len(events), 1)
+        self.assertIsNone(events[0].reward_index)
+
+        terrain = np.full((3, 3), -1, dtype=int)
+        terrain[1, 1] = 0
+        success_state = RewardState(
+            turn=19, army=(10, 10), land=(2, 2), cities=(1, 0),
+            width=3, height=3, terrain=terrain,
+        )
+        step_rewards, remaining = calculator.city_attack_outcome_rewards_for_step(
+            events, success_state,
+        )
+        self.assertEqual(len(remaining), 0)
+        self.assertAlmostEqual(step_rewards[0].city_attack_success, 0.02)
+        self.assertEqual(step_rewards[0].city_attack_failure, 0.0)
+
+    def test_retroactive_mode_preserves_reward_index(self) -> None:
+        """In retroactive mode, events should carry the attack-step reward index."""
+        from generals_bot.training.rewards import (
+            CityAttackOutcomeConfig,
+            RewardCalculator,
+            RewardConfig,
+            RewardState,
+            default_reward_config,
+        )
+
+        default = default_reward_config()
+        config = RewardConfig(
+            terminal=default.terminal,
+            metrics=default.metrics,
+            segments=(),
+            city_attack_outcome=CityAttackOutcomeConfig(
+                window_turns=10,
+                success_reward=0.02,
+                failure_penalty=-0.02,
+                attribution="retroactive",
+            ),
+        )
+        calculator = RewardCalculator(config)
+
+        before = RewardState(
+            turn=10, army=(10, 10), land=(2, 2), cities=(0, 0), city_tiles=(4,),
+        )
+        failed_city_attack = ExecutedAction(
+            player_id=0,
+            action=Action(0, 0, 4),
+            turn=10,
+            valid=True,
+            target_owner_before=-1,
+            target_army_before=20,
+            moved_army=20,
+        )
+
+        events = calculator.city_attack_outcome_events(
+            [failed_city_attack],
+            before.city_tiles,
+            attack_turn=before.turn,
+            reward_indices_by_player={0: 42},
+        )
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].reward_index, 42)
+
+    def test_episode_reset_clears_pending_attack_events(self) -> None:
+        """Env reset should clear all pending city attack events."""
+        from generals_bot.training.model import BCPolicyNet
+        from generals_bot.training.ppo import PPOConfig, SelfPlayRolloutCollector
+        from generals_bot.training.encoding import ObservationEncoder
+
+        encoder = ObservationEncoder(history_length=1)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            init_path = root / "init.pt"
+            reward_config_path = root / "reward.json"
+            _write_init_checkpoint(init_path, encoder, BCPolicyNet)
+            reward_config_path.write_text(
+                json.dumps({
+                    "version": 1,
+                    "city_attack_outcome": {
+                        "window_turns": 10,
+                        "success_reward": 0.02,
+                        "failure_penalty": -0.02,
+                        "attribution": "resolution",
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            model = BCPolicyNet(encoder.num_channels, base_channels=8)
+            model.load_state_dict(torch.load(init_path, map_location="cpu")["model_state"])
+            config = PPOConfig(
+                init_checkpoint=str(init_path),
+                output_path=str(root / "ppo.pt"),
+                reward_config_path=str(reward_config_path),
+                device="cpu",
+                updates=1,
+                num_envs=1,
+                rollout_steps=4,
+                ppo_epochs=1,
+                minibatch_size=2,
+                map_size=18,
+                max_turns=8,
+                seed=42,
+            )
+            collector = SelfPlayRolloutCollector(
+                model=model,
+                encoder=encoder,
+                config=config,
+                device=torch.device("cpu"),
+                num_envs=1,
+                seed=42,
+                env_id_offset=0,
+            )
+
+            self.assertEqual(len(collector.pending_city_attack_events[0]), 0)
+
+            collector.collect()
+
+            self.assertEqual(
+                len(collector.pending_city_attack_events[0]), 0,
+                "pending attack events should be empty after a collect cycle",
+            )
+
+    def test_global_stream_step_increments_across_rollouts(self) -> None:
+        """Global stream step should appear in rollout metadata."""
+        from generals_bot.training.model import BCPolicyNet
+        from generals_bot.training.ppo import PPOConfig, SelfPlayRolloutCollector
+        from generals_bot.training.encoding import ObservationEncoder
+
+        encoder = ObservationEncoder(history_length=1)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            init_path = root / "init.pt"
+            _write_init_checkpoint(init_path, encoder, BCPolicyNet)
+
+            model = BCPolicyNet(encoder.num_channels, base_channels=8)
+            model.load_state_dict(torch.load(init_path, map_location="cpu")["model_state"])
+            config = PPOConfig(
+                init_checkpoint=str(init_path),
+                output_path=str(root / "ppo.pt"),
+                device="cpu",
+                updates=1,
+                num_envs=1,
+                rollout_steps=4,
+                ppo_epochs=1,
+                minibatch_size=2,
+                map_size=18,
+                max_turns=8,
+                seed=42,
+            )
+            collector = SelfPlayRolloutCollector(
+                model=model,
+                encoder=encoder,
+                config=config,
+                device=torch.device("cpu"),
+                num_envs=1,
+                seed=42,
+                env_id_offset=0,
+            )
+
+            result1 = collector.collect()
+            steps = [
+                m["global_stream_step"]
+                for m in result1.batch.metadata
+                if m.get("global_stream_step") is not None
+            ]
+            self.assertGreater(len(steps), 0, "metadata should contain global_stream_step")
+            self.assertGreater(max(steps), 0, "global_stream_step should be positive")
+
+    def test_reward_attribution_mode_appears_in_stats(self) -> None:
+        """PPO rollout stats should report the reward attribution mode."""
+        from generals_bot.training.model import BCPolicyNet
+        from generals_bot.training.ppo import PPOConfig, SelfPlayRolloutCollector
+        from generals_bot.training.encoding import ObservationEncoder
+
+        encoder = ObservationEncoder(history_length=1)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            init_path = root / "init.pt"
+            reward_config_path = root / "reward.json"
+            _write_init_checkpoint(init_path, encoder, BCPolicyNet)
+            reward_config_path.write_text(
+                json.dumps({
+                    "version": 1,
+                    "city_attack_outcome": {
+                        "window_turns": 10,
+                        "success_reward": 0.02,
+                        "failure_penalty": -0.02,
+                        "attribution": "resolution",
+                    },
+                }),
+                encoding="utf-8",
+            )
+
+            model = BCPolicyNet(encoder.num_channels, base_channels=8)
+            model.load_state_dict(torch.load(init_path, map_location="cpu")["model_state"])
+            config = PPOConfig(
+                init_checkpoint=str(init_path),
+                output_path=str(root / "ppo.pt"),
+                reward_config_path=str(reward_config_path),
+                device="cpu",
+                updates=1,
+                num_envs=1,
+                rollout_steps=2,
+                ppo_epochs=1,
+                minibatch_size=2,
+                map_size=18,
+                max_turns=4,
+                seed=42,
+            )
+            collector = SelfPlayRolloutCollector(
+                model=model,
+                encoder=encoder,
+                config=config,
+                device=torch.device("cpu"),
+                seed=42,
+            )
+
+            result = collector.collect()
+
+            self.assertEqual(
+                result.stats.get("reward_attribution_mode"),
+                "resolution",
+            )
+
+    def test_attack_outcome_attribution_config_parses_resolution_and_retroactive(self) -> None:
+        """City attack outcome config should accept resolution and retroactive attribution."""
+        from generals_bot.training.rewards import load_reward_config
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            for mode in ("resolution", "retroactive"):
+                config_path = Path(temp_dir) / f"reward_{mode}.json"
+                config_path.write_text(
+                    json.dumps({
+                        "version": 1,
+                        "city_attack_outcome": {
+                            "window_turns": 10,
+                            "success_reward": 0.02,
+                            "failure_penalty": -0.02,
+                            "attribution": mode,
+                        },
+                    }),
+                    encoding="utf-8",
+                )
+                config = load_reward_config(config_path)
+                self.assertEqual(
+                    config.city_attack_outcome.attribution,
+                    mode,
+                    f"attribution should be {mode!r}",
+                )
+
+            bad_path = Path(temp_dir) / "reward_bad.json"
+            bad_path.write_text(
+                json.dumps({
+                    "version": 1,
+                    "city_attack_outcome": {
+                        "window_turns": 10,
+                        "attribution": "invalid_value",
+                    },
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "attribution"):
+                load_reward_config(bad_path)
 
 
 class _FixedPolicyModel(_BaseModule):

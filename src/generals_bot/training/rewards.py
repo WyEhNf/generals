@@ -120,6 +120,7 @@ class CityAttackOutcomeConfig:
     window_turns: int = 0
     success_reward: float = 0.0
     failure_penalty: float = 0.0
+    attribution: str = "resolution"
 
     @property
     def enabled(self) -> bool:
@@ -496,21 +497,28 @@ class RewardCalculator:
         attack_turn: int,
         reward_indices_by_player: Mapping[int, int] | None = None,
     ) -> list[CityAttackOutcomeEvent]:
-        """Return delayed outcome events created by failed neutral-city attacks."""
+        """Return delayed outcome events created by failed neutral-city attacks.
+
+        When ``attribution`` is ``"retroactive"``, each event carries the
+        rollout reward index of the step where the attack was initiated so
+        that the resolved reward can be added to the original sample row.
+        When ``attribution`` is ``"resolution"`` (the default), the reward
+        index is left as ``None`` and the caller should add the resolved
+        reward to the current step.
+        """
         config = self.config.city_attack_outcome
         if not config.enabled:
             return []
         events = []
+        use_retroactive = config.attribution == "retroactive"
         for executed in self._failed_neutral_city_attacks(
             executed_actions,
             city_tiles,
         ):
-            reward_index = (
-                None
-                if reward_indices_by_player is None
-                else reward_indices_by_player.get(executed.player_id)
-            )
-            if reward_indices_by_player is not None and reward_index is None:
+            reward_index = None
+            if use_retroactive and reward_indices_by_player is not None:
+                reward_index = reward_indices_by_player.get(executed.player_id)
+            if use_retroactive and reward_indices_by_player is not None and reward_index is None:
                 continue
             events.append(
                 CityAttackOutcomeEvent(
@@ -559,6 +567,25 @@ class RewardCalculator:
                 continue
             remaining.append(event)
         return resolved, remaining
+
+    def city_attack_outcome_rewards_for_step(
+        self,
+        events: list[CityAttackOutcomeEvent],
+        after: RewardState,
+    ) -> tuple[dict[int, RewardBreakdown], list[CityAttackOutcomeEvent]]:
+        """Return resolved outcome rewards aggregated by player for the current step.
+
+        Unlike :meth:`city_attack_outcome_rewards`, this method does not
+        attach a ``reward_index`` to each resolved event.  It is intended
+        for ``"resolution"``-mode attribution where the reward should be
+        added to the *current* environment step rather than retroactively
+        applied to a past rollout row.
+        """
+        resolved, remaining = self.city_attack_outcome_rewards(events, after)
+        rewards = {0: RewardBreakdown(), 1: RewardBreakdown()}
+        for event, breakdown in resolved:
+            rewards[event.player_id] += breakdown
+        return rewards, remaining
 
     def city_attack_failure_events(
         self,
@@ -933,16 +960,23 @@ def _parse_city_attack_outcome_config(
         raw = {}
     if not isinstance(raw, dict):
         raise ValueError("city_attack_outcome reward config must be an object")
-    unknown = set(raw) - {"window_turns", "success_reward", "failure_penalty"}
+    unknown = set(raw) - {"window_turns", "success_reward", "failure_penalty", "attribution"}
     if unknown:
         raise ValueError(f"unknown city_attack_outcome field(s): {sorted(unknown)}")
     window_turns = int(raw.get("window_turns", 0))
     if window_turns < 0:
         raise ValueError("city_attack_outcome window_turns must be nonnegative")
+    attribution = str(raw.get("attribution", "resolution"))
+    if attribution not in ("resolution", "retroactive"):
+        raise ValueError(
+            f"city_attack_outcome attribution must be 'resolution' or 'retroactive', "
+            f"got {attribution!r}"
+        )
     return CityAttackOutcomeConfig(
         window_turns=window_turns,
         success_reward=float(raw.get("success_reward", 0.0)),
         failure_penalty=float(raw.get("failure_penalty", 0.0)),
+        attribution=attribution,
     )
 
 

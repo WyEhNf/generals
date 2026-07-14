@@ -127,6 +127,12 @@ def summarize_match_reports(
         raise ValueError("cannot summarize zero match reports")
     winner_counts = Counter(str(report["winner_label"]) for report in reports)
     side_winner_counts = Counter(str(report["winner_side"]) for report in reports)
+    total = len(reports)
+    wins_a = winner_counts.get(label_a, 0)
+    wins_b = winner_counts.get(label_b, 0)
+    draws = winner_counts.get("None", 0)
+    decided = wins_a + wins_b
+    decided_win_rate_a = wins_a / decided if decided > 0 else None
     return {
         "label_a": label_a,
         "agent_a": agent_a,
@@ -135,34 +141,63 @@ def summarize_match_reports(
         "turns": turns,
         "seed_start": seed_start,
         "seed_count": seed_count,
-        "games": len(reports),
+        "games": total,
         "pass_bias": pass_bias,
         "pass_bias_turn": pass_bias_turn,
         "inference_mode": inference_mode,
         "winner_counts": dict(winner_counts),
         "side_winner_counts": dict(side_winner_counts),
-        "unfinished_count": winner_counts.get("None", 0),
-        "mean_turns": sum(report["turns"] for report in reports) / len(reports),
+        "wins_a": wins_a,
+        "wins_b": wins_b,
+        "draws": draws,
+        "decided_games": decided,
+        "decided_win_rate_a": decided_win_rate_a,
+        "draw_rate": draws / total if total > 0 else None,
+        "win_rate_a_ci95": _wilson_confidence_interval(wins_a, decided)
+        if decided > 0
+        else None,
+        "win_rate_b_ci95": _wilson_confidence_interval(wins_b, decided)
+        if decided > 0
+        else None,
+        "mean_turns": sum(report["turns"] for report in reports) / total,
         "mean_submitted_actions": sum(
             report["submitted_actions"]
             for report in reports
         )
-        / len(reports),
+        / total,
         "mean_invalid_actions": sum(
             report["invalid_actions"]
             for report in reports
         )
-        / len(reports),
+        / total,
         "mean_late_both_pass_rate": sum(
             report["late_both_pass_rate"] or 0
             for report in reports
         )
-        / len(reports),
+        / total,
         "max_both_pass_streak": max(report["max_both_pass_streak"] for report in reports),
         "bad_seed_count_streak_ge_100": sum(
             1 for report in reports
             if report["max_both_pass_streak"] >= 100
         ),
+    }
+
+
+def _wilson_confidence_interval(successes: int, trials: int, z: float = 1.96) -> dict[str, float | None]:
+    """Return the Wilson score 95% confidence interval for a proportion.
+
+    Returns ``{"lower": float, "upper": float, "center": float}``.
+    """
+    if trials <= 0:
+        return {"lower": None, "upper": None, "center": None}
+    p = successes / trials
+    denominator = 1.0 + z * z / trials
+    center = (p + z * z / (2.0 * trials)) / denominator
+    margin = z * ((p * (1.0 - p) + z * z / (4.0 * trials)) / trials) ** 0.5 / denominator
+    return {
+        "lower": max(0.0, center - margin),
+        "upper": min(1.0, center + margin),
+        "center": float(p),
     }
 
 

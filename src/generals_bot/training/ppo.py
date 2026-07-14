@@ -412,6 +412,7 @@ class SelfPlayRolloutCollector:
             []
             for _ in range(self.num_envs)
         ]
+        self.global_stream_step: dict[tuple[int, int], int] = {}
         self.next_map_seed = config.seed if seed is None else int(seed)
         for env_id in range(self.num_envs):
             self._reset_env(env_id)
@@ -498,9 +499,16 @@ class SelfPlayRolloutCollector:
                         "env_id": self.env_id_offset + env_id,
                         "player_id": player,
                         "turn": observation.turn,
+                        "global_stream_step": self.global_stream_step.get(
+                            (env_id, player), 0
+                        ),
                     }
                     for (env_id, player), observation in zip(keys, observations, strict=True)
                 )
+                for key in keys:
+                    self.global_stream_step[key] = (
+                        self.global_stream_step.get(key, 0) + 1
+                    )
 
                 actions_by_env: dict[int, dict[int, Action | PassAction]] = {}
                 for (env_id, player), action in zip(keys, sampled.actions, strict=True):
@@ -523,11 +531,12 @@ class SelfPlayRolloutCollector:
                         for player in matchup.learner_players
                         if (env_id, player) in reward_indices_by_stream
                     }
-                    for event in self.pending_city_attack_events[env_id]:
-                        if event.reward_index is None:
-                            event.reward_index = reward_indices_by_player.get(
-                                event.player_id
-                            )
+                    if self.reward_calculator.config.city_attack_outcome.attribution == "retroactive":
+                        for event in self.pending_city_attack_events[env_id]:
+                            if event.reward_index is None:
+                                event.reward_index = reward_indices_by_player.get(
+                                    event.player_id
+                                )
                     _, _, done, info = env.step(actions)
                     after_reward_state = RewardState.from_env(env)
                     city_capture_counts = self.reward_calculator.city_capture_counts(
@@ -566,19 +575,33 @@ class SelfPlayRolloutCollector:
                         )
                     )
                     self.pending_city_events[env_id] = pending_events
-                    resolved_attack_events, pending_attack_events = (
-                        self.reward_calculator.city_attack_outcome_rewards(
-                            self.pending_city_attack_events[env_id],
-                            after_reward_state,
+                    if self.reward_calculator.config.city_attack_outcome.attribution == "resolution":
+                        attack_outcome_rewards, pending_attack_events = (
+                            self.reward_calculator.city_attack_outcome_rewards_for_step(
+                                self.pending_city_attack_events[env_id],
+                                after_reward_state,
+                            )
                         )
-                    )
-                    self.pending_city_attack_events[env_id] = pending_attack_events
-                    for event, breakdown in resolved_attack_events:
-                        add_reward_adjustment(
-                            env_id=env_id,
-                            event=event,
-                            breakdown=breakdown,
+                        self.pending_city_attack_events[env_id] = pending_attack_events
+                        for player in (0, 1):
+                            reward_breakdowns[player] += attack_outcome_rewards.get(
+                                player,
+                                RewardBreakdown(),
+                            )
+                    else:
+                        resolved_attack_events, pending_attack_events = (
+                            self.reward_calculator.city_attack_outcome_rewards(
+                                self.pending_city_attack_events[env_id],
+                                after_reward_state,
+                            )
                         )
+                        self.pending_city_attack_events[env_id] = pending_attack_events
+                        for event, breakdown in resolved_attack_events:
+                            add_reward_adjustment(
+                                env_id=env_id,
+                                event=event,
+                                breakdown=breakdown,
+                            )
                     reward_breakdowns = {
                         player: (
                             reward_breakdowns[player]
@@ -651,9 +674,10 @@ class SelfPlayRolloutCollector:
                     done_rows.append(done_by_env.get(env_id, False))
 
             last_values = self._bootstrap_values()
-            for events in self.pending_city_attack_events:
-                for event in events:
-                    event.reward_index = None
+            if self.reward_calculator.config.city_attack_outcome.attribution == "retroactive":
+                for events in self.pending_city_attack_events:
+                    for event in events:
+                        event.reward_index = None
 
         rewards = torch.tensor(reward_rows, dtype=torch.float32)
         old_values = torch.stack(value_rows).to(torch.float32)
@@ -687,6 +711,7 @@ class SelfPlayRolloutCollector:
         )
         stats = {
             "completed_episodes": float(len(completed_lengths)),
+            "reward_attribution_mode": self.reward_calculator.config.city_attack_outcome.attribution,
             "mean_episode_return": _mean(completed_returns),
             "mean_episode_length": _mean(completed_lengths),
             "win_rate_player0": _rate(player0_wins, len(completed_lengths)),
@@ -860,6 +885,8 @@ class SelfPlayRolloutCollector:
             self.matchups.append(matchup)
         self.histories.pop((env_id, 0), None)
         self.histories.pop((env_id, 1), None)
+        self.global_stream_step.pop((env_id, 0), None)
+        self.global_stream_step.pop((env_id, 1), None)
         for runner in self.opponent_runners.values():
             runner.reset_key((env_id, 0))
             runner.reset_key((env_id, 1))
