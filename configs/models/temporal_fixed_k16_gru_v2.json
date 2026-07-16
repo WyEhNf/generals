@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "model_type": "temporal_policy_v1",
+  "base_channels": 64,
+  "temporal_dim": 192,
+  "chunk_token_dim": 192,
+  "chunk_transformer_layers": 2,
+  "chunk_transformer_heads": 4,
+  "chunk_transformer_ffn_dim": 512,
+  "max_chunk_memory": 4,
+  "dropout": 0.1,
+  "chunk_size": 16,
+  "memory_type": "gru",
+  "gru_layers": 3
+}

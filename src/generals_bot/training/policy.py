@@ -292,3 +292,175 @@ def apply_pass_bias(
     if not valid_mask[:-1].any():
         return
     logits[:, -1] -= pass_bias
+
+
+class TemporalModelPolicy(Policy):
+    """Run a temporal checkpoint as a simulator policy.
+
+    Maintains per-tick temporal state (accumulator, chunk memory, previous
+    observation and action) across calls to :meth:`act`.
+    """
+
+    def __init__(
+        self,
+        checkpoint_path: str | Path,
+        *,
+        device: str = "auto",
+        pass_bias: float = 0.0,
+        pass_bias_turn: int = 50,
+    ) -> None:
+        if device == "auto":
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        else:
+            self.device = torch.device(device)
+        self.pass_bias = float(pass_bias)
+        self.pass_bias_turn = int(pass_bias_turn)
+
+        checkpoint = torch.load(checkpoint_path, map_location=self.device)
+        self._validate_checkpoint(checkpoint)
+        model_state = checkpoint["model_state"]
+        self.policy_mode = str(checkpoint.get("policy_mode", POLICY_MODE))
+        self.policy_history_length = int(checkpoint.get("history_length", 1))
+        self.encoder = ObservationEncoder(history_length=self.policy_history_length)
+        input_channels = int(checkpoint["input_channels"])
+        if input_channels != self.encoder.num_channels:
+            raise ValueError(
+                f"checkpoint input_channels={input_channels} does not match "
+                f"encoder channels={self.encoder.num_channels}"
+            )
+        base_channels = int(checkpoint.get("base_channels", 64))
+
+        temporal_config_dict = checkpoint.get("temporal_config")
+        if temporal_config_dict is None:
+            raise ValueError("checkpoint missing temporal_config")
+        from generals_bot.training.temporal import TemporalModelConfig, TemporalPolicyNet
+        from generals_bot.training.chunking import FixedChunkController
+
+        self.temporal_config = TemporalModelConfig(
+            base_channels=base_channels,
+            temporal_dim=int(temporal_config_dict.get("temporal_dim", 192)),
+            chunk_token_dim=int(temporal_config_dict.get("chunk_token_dim", 192)),
+            chunk_transformer_layers=int(
+                temporal_config_dict.get("chunk_transformer_layers", 2)
+            ),
+            chunk_transformer_heads=int(
+                temporal_config_dict.get("chunk_transformer_heads", 4)
+            ),
+            chunk_transformer_ffn_dim=int(
+                temporal_config_dict.get("chunk_transformer_ffn_dim", 512)
+            ),
+            max_chunk_memory=int(temporal_config_dict.get("max_chunk_memory", 32)),
+            dropout=float(temporal_config_dict.get("dropout", 0.0)),
+            chunk_size=int(temporal_config_dict.get("chunk_size", 8)),
+            encoder_type=str(temporal_config_dict.get("encoder_type", "global")),
+            memory_type=str(temporal_config_dict.get("memory_type", "transformer")),
+            gru_layers=int(temporal_config_dict.get("gru_layers", 3)),
+            event_context_mode=str(
+                temporal_config_dict.get("event_context_mode", "feature")
+            ),
+            spatial_grid_size=int(temporal_config_dict.get("spatial_grid_size", 4)),
+            spatial_transformer_layers=int(
+                temporal_config_dict.get("spatial_transformer_layers", 1)
+            ),
+        )
+
+        spatial = BCPolicyNet(
+            input_channels,
+            base_channels=base_channels,
+            temporal_dim=self.temporal_config.temporal_dim,
+        ).to(self.device)
+        self.model = TemporalPolicyNet(
+            input_channels, spatial, self.temporal_config,
+        ).to(self.device)
+        self.model.load_state_dict(model_state)
+        self.model.eval()
+        self.chunk_controller = FixedChunkController(self.temporal_config.chunk_size)
+
+        self.player_id: int | None = None
+        self.history: deque[Observation] = deque(
+            maxlen=self.policy_history_length,
+        )
+        self._prev_observation: Observation | None = None
+        self._prev_action: Action | PassAction | None = None
+
+    @staticmethod
+    def _validate_checkpoint(checkpoint: dict) -> None:
+        model_type = str(checkpoint.get("model_type", ""))
+        if model_type != "temporal_policy_v1":
+            raise ValueError(
+                f"TemporalModelPolicy requires model_type=temporal_policy_v1, "
+                f"got {model_type!r}"
+            )
+
+    def reset(self, player_id: int, config: GameConfig) -> None:
+        """Reset temporal state for a new episode."""
+        del config
+        self.player_id = player_id
+        self.history.clear()
+        self._prev_observation = None
+        self._prev_action = None
+        self.model.reset()
+        self.chunk_controller.reset(player_id)
+
+    @torch.no_grad()
+    def act(self, observation: Observation) -> Action | PassAction:
+        """Select an action using the temporal policy."""
+        if self.player_id is None:
+            raise RuntimeError("must call reset() before act()")
+        self.history.append(observation)
+        history = tuple(self.history)
+        if len(history) < self.policy_history_length:
+            history = (history[0],) * (self.policy_history_length - len(history)) + history
+        encoded = self.encoder.encode_history(history)
+        x = torch.from_numpy(np.ascontiguousarray(encoded[None, :, :, :])).to(
+            self.device, dtype=torch.float32,
+        )
+        chunk_boundary = self.chunk_controller.should_end_chunk(self.player_id)
+        cb_tensor = torch.tensor([chunk_boundary], device=self.device)
+
+        output = self.model(x, chunk_boundary=cb_tensor)
+
+        mask = valid_action_mask(observation)
+        action = self._select_action(output, mask, observation)
+        self._prev_observation = observation
+        self._prev_action = action
+        return action
+
+    def _select_action(
+        self,
+        output: dict[str, torch.Tensor],
+        mask: np.ndarray,
+        observation: Observation,
+    ) -> Action | PassAction:
+        """Select an action from model output following hierarchical policy."""
+        if self.policy_mode != POLICY_MODE:
+            logits = flatten_policy_logits(
+                output["move_logits"].cpu(), output["pass_logits"].cpu(),
+            )
+            mask_tensor = torch.from_numpy(mask)
+            apply_pass_bias(
+                logits, mask, observation.turn,
+                pass_bias=self.pass_bias,
+                pass_bias_turn=self.pass_bias_turn,
+            )
+            logits[~mask_tensor] = -1e9
+            label = int(torch.argmax(logits, dim=1)[0])
+        else:
+            action_logit = float(output["action_logits"].cpu().item())
+            if self.pass_bias > 0 and observation.turn >= self.pass_bias_turn:
+                action_logit += self.pass_bias
+            if action_logit <= 0.0:
+                return PassAction(self.player_id)
+            move_logits = output["move_logits"].cpu().flatten()
+            move_mask = torch.from_numpy(mask[:-1])
+            if not bool(move_mask.any()):
+                return PassAction(self.player_id)
+            move_logits[~move_mask] = -1e9
+            label = int(torch.argmax(move_logits, dim=0).item())
+
+        return label_to_action(
+            label,
+            player_id=self.player_id,
+            height=observation.height,
+            width=observation.width,
+        )

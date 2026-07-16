@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "model_type": "temporal_policy_v1",
+  "base_channels": 64,
+  "temporal_dim": 128,
+  "chunk_token_dim": 128,
+  "chunk_transformer_layers": 2,
+  "chunk_transformer_heads": 4,
+  "chunk_transformer_ffn_dim": 384,
+  "max_chunk_memory": 16,
+  "dropout": 0.0,
+  "chunk_size": 8,
+  "encoder_type": "ewsc",
+  "spatial_grid_size": 4,
+  "spatial_transformer_layers": 1
+}

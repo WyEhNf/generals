@@ -637,6 +637,27 @@ class TrainingBCTest(unittest.TestCase):
         self.assertEqual(metrics["enemy_king_mean_distance"], 4.0)
 
     @unittest.skipUnless(TORCH_AVAILABLE, "torch is not installed")
+    def test_enemy_king_loss_accepts_fp16_logits(self) -> None:
+        """Impossible-tile masking must remain representable in FP16."""
+        from generals_bot.training.losses import enemy_king_prediction_loss
+
+        logits = torch.tensor([[[[1.0, 0.0], [0.5, -0.5]]]], dtype=torch.float16)
+        labels = torch.tensor([0])
+        valid_mask = torch.tensor([[True, False, True, True]])
+        distances = torch.tensor([[0.0, 1.0, 1.0, 2.0]])
+
+        loss, _ = enemy_king_prediction_loss(
+            logits,
+            labels=labels,
+            valid_mask=valid_mask,
+            distances=distances,
+            distance_weight=1.0,
+            distance_cap=10.0,
+        )
+
+        self.assertTrue(torch.isfinite(loss))
+
+    @unittest.skipUnless(TORCH_AVAILABLE, "torch is not installed")
     def test_training_writes_enemy_king_loss_when_enabled(self) -> None:
         """Training should include enemy king metrics only when the loss is enabled."""
         from generals_bot.training.trainer import TrainConfig, train_bc

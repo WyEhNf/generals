@@ -124,15 +124,30 @@ def make_policy(
     elif spec.kind == "march-right":
         policy = MarchPolicy(direction=Direction.RIGHT)
     elif spec.kind == "checkpoint":
-        from generals_bot.training.policy import BCModelPolicy
+        import torch as _torch
 
-        policy = BCModelPolicy(
-            spec.value,
-            device=device,
-            pass_bias=pass_bias,
-            pass_bias_turn=pass_bias_turn,
-            enemy_king_predictor_path=spec.enemy_king_predictor_path,
-        )
+        checkpoint_path = Path(spec.value)
+        raw = _torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        model_type = str(raw.get("model_type", ""))
+        if model_type == "temporal_policy_v1":
+            from generals_bot.training.policy import TemporalModelPolicy
+
+            policy = TemporalModelPolicy(
+                checkpoint_path,
+                device=device,
+                pass_bias=pass_bias,
+                pass_bias_turn=pass_bias_turn,
+            )
+        else:
+            from generals_bot.training.policy import BCModelPolicy
+
+            policy = BCModelPolicy(
+                checkpoint_path,
+                device=device,
+                pass_bias=pass_bias,
+                pass_bias_turn=pass_bias_turn,
+                enemy_king_predictor_path=spec.enemy_king_predictor_path,
+            )
     elif spec.kind == "router":
         from generals_bot.training.router import RouterModelPolicy
 

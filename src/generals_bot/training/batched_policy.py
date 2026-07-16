@@ -101,22 +101,76 @@ class BatchedBCPolicyRunner:
                 f"encoder channels={self.encoder.num_channels}"
             )
 
-        self.model = BCPolicyNet(
-            input_channels,
-            base_channels=int(checkpoint.get("base_channels", 64)),
-        ).to(self.device)
-        load_model_state_compatible(self.model, checkpoint["model_state"])
-        self.model.eval()
+        self._is_temporal = (
+            str(checkpoint.get("model_type", "")) == "temporal_policy_v1"
+        )
+        self._temporal_model: Any = None
+        self._chunk_controllers: dict[ActionKey, Any] = {}
+        self._temporal_active_keys: tuple[ActionKey, ...] | None = None
+        if self._is_temporal:
+            from generals_bot.training.temporal import TemporalModelConfig, TemporalPolicyNet
+
+            tc = checkpoint["temporal_config"]
+            temporal_config = TemporalModelConfig(
+                base_channels=int(checkpoint.get("base_channels", 64)),
+                temporal_dim=int(tc.get("temporal_dim", 192)),
+                chunk_token_dim=int(tc.get("chunk_token_dim", 192)),
+                chunk_transformer_layers=int(tc.get("chunk_transformer_layers", 2)),
+                chunk_transformer_heads=int(tc.get("chunk_transformer_heads", 4)),
+                chunk_transformer_ffn_dim=int(tc.get("chunk_transformer_ffn_dim", 512)),
+                max_chunk_memory=int(tc.get("max_chunk_memory", 32)),
+                dropout=float(tc.get("dropout", 0.0)),
+                chunk_size=int(tc.get("chunk_size", 8)),
+                encoder_type=str(tc.get("encoder_type", "global")),
+                memory_type=str(tc.get("memory_type", "transformer")),
+                gru_layers=int(tc.get("gru_layers", 3)),
+                event_context_mode=str(tc.get("event_context_mode", "feature")),
+                spatial_grid_size=int(tc.get("spatial_grid_size", 4)),
+                spatial_transformer_layers=int(tc.get("spatial_transformer_layers", 1)),
+            )
+            spatial = BCPolicyNet(
+                input_channels,
+                base_channels=temporal_config.base_channels,
+                temporal_dim=temporal_config.temporal_dim,
+            ).to(self.device)
+            self._temporal_model = TemporalPolicyNet(
+                input_channels, spatial, temporal_config,
+            ).to(self.device)
+            self._temporal_model.load_state_dict(checkpoint["model_state"])
+            self._temporal_model.eval()
+            self._chunk_size = temporal_config.chunk_size
+            self.model = self._temporal_model
+        else:
+            self.model = BCPolicyNet(
+                input_channels,
+                base_channels=int(checkpoint.get("base_channels", 64)),
+            ).to(self.device)
+            load_model_state_compatible(self.model, checkpoint["model_state"])
+            self.model.eval()
+
         self.histories: dict[ActionKey, deque[Observation]] = {}
         self.stats = BatchedPolicyStats()
 
     def reset_key(self, key: ActionKey) -> None:
-        """Clear one logical stream's observation history."""
+        """Clear one logical stream's observation history and temporal state."""
         self.histories.pop(key, None)
+        if self._is_temporal:
+            self._chunk_controllers.clear()
+            self._temporal_active_keys = None
+            if self._temporal_model is not None:
+                # Runtime memory is row-indexed.  Resetting all rows is safer
+                # than allowing a newly inserted key to inherit another
+                # stream's hidden state.
+                self._temporal_model.reset()
 
     def reset_all(self) -> None:
-        """Clear all stored observation histories."""
+        """Clear all stored observation histories and temporal state."""
         self.histories.clear()
+        if self._is_temporal:
+            self._chunk_controllers.clear()
+            self._temporal_active_keys = None
+            if self._temporal_model is not None:
+                self._temporal_model.reset()
 
     def reset_stats(self) -> None:
         """Clear accumulated profiling stats."""
@@ -128,13 +182,50 @@ class BatchedBCPolicyRunner:
         items: Iterable[tuple[ActionKey, Observation]],
     ) -> dict[ActionKey, ActionLike]:
         """Select actions for many keyed observations."""
+        materialized = list(items)
+        requested_keys = {key for key, _ in materialized}
+        if self._is_temporal:
+            materialized.sort(key=lambda item: repr(item[0]))
+            current_keys = tuple(key for key, _ in materialized)
+            if self._temporal_active_keys is None:
+                self._temporal_active_keys = current_keys
+            elif current_keys != self._temporal_active_keys:
+                active = set(self._temporal_active_keys)
+                current = set(current_keys)
+                if not current.issubset(active):
+                    raise RuntimeError(
+                        "temporal batched inference cannot add or replace streams; "
+                        "call reset_all() before changing keys"
+                    )
+                observations_by_key = dict(materialized)
+                for key in self._temporal_active_keys:
+                    if key not in observations_by_key:
+                        history = self.histories.get(key)
+                        if not history:
+                            raise RuntimeError(
+                                f"temporal stream {key!r} has no observation for padding"
+                            )
+                        observations_by_key[key] = history[-1]
+                # Finished streams keep their row alive with the last observation.
+                # Their actions are discarded below, while active rows retain the
+                # same temporal-memory index for the rest of the match batch.
+                materialized = [
+                    (key, observations_by_key[key])
+                    for key in self._temporal_active_keys
+                ]
         grouped: dict[tuple[int, int], list[tuple[ActionKey, Observation]]] = defaultdict(list)
-        for key, observation in items:
+        for key, observation in materialized:
             grouped[(observation.height, observation.width)].append((key, observation))
+        if self._is_temporal and len(grouped) > 1:
+            raise RuntimeError(
+                "temporal batched inference requires one board size per runner"
+            )
 
         actions: dict[ActionKey, ActionLike] = {}
         for group in grouped.values():
             actions.update(self._act_group(group))
+        if self._is_temporal:
+            return {key: action for key, action in actions.items() if key in requested_keys}
         return actions
 
     def summary(self) -> dict[str, Any]:
@@ -171,7 +262,20 @@ class BatchedBCPolicyRunner:
         self._sync_if_profiled()
         t2 = perf_counter()
 
-        output = self.model(x)
+        if self._is_temporal and self._temporal_model is not None:
+            from generals_bot.training.chunking import FixedChunkController
+
+            cb_flags: list[bool] = []
+            for key in keys:
+                controller = self._chunk_controllers.setdefault(
+                    key,
+                    FixedChunkController(self._chunk_size),
+                )
+                cb_flags.append(controller.should_end_chunk(key))
+            cb_tensor = torch.tensor(cb_flags, device=self.device)
+            output = self._temporal_model(x, chunk_boundary=cb_tensor)
+        else:
+            output = self.model(x)
         self._sync_if_profiled()
         t3 = perf_counter()
 

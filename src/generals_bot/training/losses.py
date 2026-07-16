@@ -30,7 +30,8 @@ def enemy_king_prediction_loss(
     labels = labels.to(flat_logits.device)
     valid_mask = valid_mask.to(flat_logits.device)
     distances = distances.to(flat_logits.device, dtype=torch.float32)
-    masked_logits = flat_logits.masked_fill(~valid_mask, -1e9)
+    mask_value = torch.finfo(flat_logits.dtype).min
+    masked_logits = flat_logits.masked_fill(~valid_mask, mask_value)
     ce_loss = F.cross_entropy(masked_logits, labels)
     probabilities = torch.softmax(masked_logits, dim=1)
     normalized_distances = distances.clamp_max(distance_cap) / distance_cap

@@ -11,7 +11,13 @@ sys.path.insert(0, str(ROOT / "src"))
 
 try:
     from generals_bot.training.dataset import REPLAY_FILTER_RULES
-    from generals_bot.training.trainer import TrainConfig, train_bc
+    from generals_bot.training.temporal import TemporalModelConfig
+    from generals_bot.training.trainer import (
+        TemporalTrainConfig,
+        TrainConfig,
+        train_bc,
+        train_temporal_bc,
+    )
 except RuntimeError as exc:
     print(str(exc), file=sys.stderr)
     raise SystemExit(1)
@@ -23,6 +29,17 @@ DEFAULT_OUTPUT = "artifacts/bc_policy_smoke.pt"
 
 def main() -> int:
     """Run behavior cloning training from CLI arguments."""
+    parser = build_parser()
+    args = parser.parse_args()
+    config = config_from_args(args, parser=parser)
+    metrics = train_temporal_bc(config) if isinstance(config, TemporalTrainConfig) else train_bc(config)
+    print(json.dumps(metrics, indent=2))
+    print(args.output)
+    return 0
+
+
+def build_parser() -> argparse.ArgumentParser:
+    """Build the shared spatial/temporal behavior-cloning CLI parser."""
     parser = argparse.ArgumentParser(description="Train a behavior cloning policy.")
     parser.add_argument("--input", default=DEFAULT_INPUT)
     parser.add_argument("--output", default=DEFAULT_OUTPUT)
@@ -69,10 +86,41 @@ def main() -> int:
     parser.add_argument("--val-limit-replays", type=_none_or_int, default=100)
     parser.add_argument("--val-every-steps", type=int, default=500)
     parser.add_argument("--val-batches", type=int, default=20)
+    parser.add_argument("--warmup-steps", type=int, default=0)
+    parser.add_argument("--min-lr-ratio", type=float, default=1.0)
     parser.add_argument("--device", default="auto")
-    args = parser.parse_args()
+    temporal = parser.add_argument_group("temporal behavior cloning")
+    temporal.add_argument(
+        "--model-config",
+        default=None,
+        help="Temporal model JSON. Supplying this flag enables temporal BC training.",
+    )
+    temporal.add_argument("--sequence-length", type=int, default=64)
+    temporal.add_argument("--burn-in", type=int, default=16)
+    temporal.add_argument(
+        "--chunk-size",
+        type=int,
+        default=None,
+        help="Optional explicit K; must match chunk_size in --model-config.",
+    )
+    temporal.add_argument("--backbone-lr", type=float, default=1e-5)
+    temporal.add_argument("--temporal-lr", type=float, default=1e-4)
+    temporal.add_argument("--head-lr", type=float, default=5e-5)
+    temporal.add_argument("--gradient-accumulation", type=int, default=1)
+    temporal.add_argument("--replay-shuffle-buffer-size", type=int, default=2048)
+    temporal.add_argument("--max-val-predicted-pass-rate", type=float, default=1.0)
+    temporal.add_argument("--max-val-move-false-pass-rate", type=float, default=1.0)
+    temporal.add_argument("--amp", action="store_true")
+    return parser
 
-    config = TrainConfig(
+
+def config_from_args(
+    args: argparse.Namespace,
+    *,
+    parser: argparse.ArgumentParser | None = None,
+) -> TrainConfig:
+    """Convert parsed CLI arguments into a spatial or temporal train config."""
+    common = dict(
         input_path=args.input,
         output_path=args.output,
         split=args.split,
@@ -113,11 +161,51 @@ def main() -> int:
         val_limit_replays=args.val_limit_replays,
         val_every_steps=args.val_every_steps,
         val_batches=args.val_batches,
+        warmup_steps=args.warmup_steps,
+        min_lr_ratio=args.min_lr_ratio,
     )
-    metrics = train_bc(config)
-    print(json.dumps(metrics, indent=2))
-    print(args.output)
-    return 0
+    if args.model_config is None:
+        return TrainConfig(**common)
+
+    try:
+        temporal_model = TemporalModelConfig.from_json(args.model_config)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        if parser is not None:
+            parser.error(f"invalid --model-config: {exc}")
+        raise
+    chunk_size = temporal_model.chunk_size
+    if args.chunk_size is not None and args.chunk_size != chunk_size:
+        message = (
+            f"--chunk-size={args.chunk_size} does not match "
+            f"model config chunk_size={chunk_size}"
+        )
+        if parser is not None:
+            parser.error(message)
+        raise ValueError(message)
+    if args.base_channels != temporal_model.base_channels:
+        message = (
+            f"--base-channels={args.base_channels} does not match "
+            f"model config base_channels={temporal_model.base_channels}"
+        )
+        if parser is not None:
+            parser.error(message)
+        raise ValueError(message)
+
+    return TemporalTrainConfig(
+        **common,
+        model_config_path=args.model_config,
+        sequence_length=args.sequence_length,
+        burn_in=args.burn_in,
+        chunk_size=chunk_size,
+        backbone_lr=args.backbone_lr,
+        temporal_lr=args.temporal_lr,
+        head_lr=args.head_lr,
+        gradient_accumulation=args.gradient_accumulation,
+        use_amp=args.amp,
+        replay_shuffle_buffer_size=args.replay_shuffle_buffer_size,
+        max_val_predicted_pass_rate=args.max_val_predicted_pass_rate,
+        max_val_move_false_pass_rate=args.max_val_move_false_pass_rate,
+    )
 
 
 def _none_or_int(value: str) -> int | None:
